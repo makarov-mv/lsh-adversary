@@ -4,6 +4,17 @@ import sklearn.neighbors as skln
 import pickle
 import os
 from tqdm.notebook import tqdm
+import hashlib
+import scipy.stats
+
+def hash_repr(*params):
+    m = hashlib.sha256()
+    for p in params:
+        m.update(str(sorted(p.items())).encode("utf-8"))
+    return m
+
+def int_repr(*params):
+    return int.from_bytes(hash_repr(*params).digest(), 'little')
 
 def l1_norm(a):
     return np.linalg.norm(a, 1)
@@ -111,7 +122,7 @@ class Environment:
                 self.points = np.zeros((point_params['n'], point_params['d']), dtype=int)
                 self.nn_checker = ZeroChecker(point_params['d'])
             elif self._point_params['point_type'] == "random":
-                seed = np.abs(hash(frozenset(point_params.items())))
+                seed = int_repr(point_params)
                 rng = np.random.default_rng(seed=seed)
                 self.points = rng.binomial(1, 0.5, size=(point_params['n'], point_params['d']))
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
@@ -119,7 +130,7 @@ class Environment:
                 raise ValueError
         if need_to_change_lsh:
             self._lsh_params = lsh_params
-            seed = np.abs(hash(frozenset(lsh_params.items())))
+            seed = int_repr(lsh_params)
             rng = np.random.default_rng(seed=seed)
             self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
 
@@ -196,7 +207,6 @@ def run_adaptive_alg(z, nn_checker, lsh, target_distance, t=None, max_resamples=
                         ql = qm
 
                 flip_bits(q, np.argwhere(qr != ql)[0])
-            #         print("Found bit at dist", l1_norm(qr))
                 if found_error:
                     break
     except OutOfQueriesError:
@@ -243,8 +253,7 @@ def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=No
 
 def run_experiments(environment, point_params, lsh_params, experiment_params, data_dir):
     if data_dir is not None:
-        name = str((sorted(experiment_params.items()), sorted(point_params.items()), sorted(lsh_params.items())))
-        name = str(hash(name))
+        name = hash_repr(experiment_params, point_params, lsh_params).hexdigest()
         name = name + ".pickle"
         name = os.path.join(data_dir, name)
         if os.path.exists(name):
@@ -252,8 +261,7 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
                 res = pickle.load(handle)
             return res
     
-    seed = hash((frozenset(experiment_params.items()), frozenset(point_params.items()), frozenset(lsh_params.items())))
-    seed = np.abs(seed)
+    seed = int_repr(experiment_params, point_params, lsh_params)
     rng = np.random.default_rng(seed)
     
     
@@ -272,26 +280,26 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
     
     return cur_res
 
-def process_results(res, batch_count=10, count_failures=False):
+def process_results(res, batch_count=10):
     success_prob = []
     err_succ_prob = []
     mean_queries = np.zeros(len(res))
     err_queries = np.zeros(len(res))
     for i, v in enumerate(res):
-        successes = np.array([int(e[0]) for e in v]).reshape(batch_count, -1)
+        successes = np.array([int(e[0]) for e in v])
         success_prob.append(successes.mean())
-        err_succ_prob.append(successes.mean(axis=1).std())
+        err_succ_prob.append(scipy.stats.sem(successes))
         
-        if count_failures:
-            queries = [e[1] for e in v]
-        else:
-            queries = [e[1] for e in v if e[0]]
-        if len(queries) == 0:
-            mean_queries[i] = np.nan
-            err_queries[i] = np.nan
-        else:
-            mean_queries[i] = np.mean(queries)
-            err_queries[i] = np.std(queries)
+        queries = np.array([e[1] for e in v])
+        mean_queries[i] = queries.mean()
+        err_queries[i] = scipy.stats.sem(queries)
+        
+        #if len(queries) == 0:
+            #mean_queries[i] = np.nan
+            #err_queries[i] = np.nan
+        #else:
+            #mean_queries[i] = np.mean(queries)
+            #err_queries[i] = np.std(queries)
     return (success_prob, err_succ_prob), (mean_queries, err_queries)
 
 def run_basic_grid_experiment(grid, exp_param_name, environment, point_params, lsh_params, exp_params, data_dir, disable_tqdm=False):
