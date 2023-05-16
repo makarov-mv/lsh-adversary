@@ -37,7 +37,7 @@ class HammingLSH:
         self._k = int(np.floor(-np.log(self._n) / np.log(1 - r2 / self._d)))
         self._rho = np.log(1 - r1/self._d) / np.log(1 - r2/self._d)
         if l is None:
-            self._l = int(np.ceil(np.power(self._n, self._rho) * np.log(1/delta)))
+            self._l = int(np.ceil(np.power(self._n, self._rho) * np.log2(1/delta)))
         else:
             self._l = l
             
@@ -269,9 +269,12 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
         exp_func = run_adaptive_alg
     elif experiment_params['alg_type'] == "random":
         exp_func = run_random_alg
-    environment.prepare(point_params, lsh_params)
     cur_res = []
+    new_point_params = point_params.copy()
     for i in range(experiment_params['iter_num']):
+        if experiment_params.get('change_points', False):
+            new_point_params['cur_iter'] = i
+        environment.prepare(new_point_params, lsh_params)
         cur_res.append(exp_func(environment.points[0], environment.nn_checker, environment.lsh, rng=rng, **experiment_params))
     
     if data_dir is not None:
