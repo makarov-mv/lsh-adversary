@@ -6,6 +6,37 @@ import os
 from tqdm.notebook import tqdm
 import hashlib
 import scipy.stats
+from sklearn.datasets import fetch_openml
+import pandas as pd
+
+def get_msweb():
+    # get the data here
+    # https://data.world/uci/anonymous-microsoft-web-data
+    msweb = pd.read_csv("datasets/anonymous+microsoft+web+data/anonymous-msweb.data", low_memory=False, header=None, names=['A', 'B', 'C', 'D', 'E', 'F'])
+    ids = msweb['B'][msweb['A'] == 'C']
+    attr = msweb[msweb['A'] == 'A']
+
+    attr_map = dict()
+    for i in range(len(attr)):
+        attr_map[attr['B'].iloc[i]] = i
+
+    msweb_points = np.zeros((len(ids), len(attr_map)), dtype=int)
+    cur_pos = -1
+    for ir, row in msweb.iterrows():
+        if row['A'] == 'C':
+            cur_pos += 1
+        elif row['A'] == 'V':
+            msweb_points[cur_pos, attr_map[row['B']]] = 1
+    return msweb_points
+
+def get_mnist_binary():
+    mnist_data = fetch_openml('mnist_784', parser='auto')
+    mnist_points = (mnist_data['data'].to_numpy() > 0).astype(int)
+    return mnist_points
+
+def get_mushroom():
+    mushroom_data = fetch_openml(data_id=24, parser='auto')
+    return pd.get_dummies(mushroom_data.data).to_numpy(dtype=int)
 
 def hash_repr(*params):
     m = hashlib.sha256()
@@ -126,6 +157,30 @@ class Environment:
                 rng = np.random.default_rng(seed=seed)
                 self.points = rng.binomial(1, 0.5, size=(point_params['n'], point_params['d']))
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
+            elif self._point_params['point_type'] == "mnist_binary":
+                assert point_params['d'] == 784
+                assert point_params['n'] <= 70000
+                
+                mnist_points = get_mnist_binary()
+
+                self.points = mnist_points[:point_params['n']]
+                self.nn_checker = skln.KDTree(self.points, metric='l1')
+            elif self._point_params['point_type'] == "msweb":
+                assert point_params['d'] == 294
+                assert point_params['n'] <= 32711
+
+                msweb_points = get_msweb()
+                
+                self.points = msweb_points[:point_params['n']]
+                self.nn_checker = skln.KDTree(self.points, metric='l1')  
+            elif self._point_params['point_type'] == "mushroom":
+                assert point_params['d'] == 116
+                assert point_params['n'] <= 8124
+
+                mush_points = get_mushroom()
+                
+                self.points = mush_points[:point_params['n']]
+                self.nn_checker = skln.KDTree(self.points, metric='l1')            
             else:
                 raise ValueError
         if need_to_change_lsh:
@@ -275,7 +330,11 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
         if experiment_params.get('change_points', False):
             new_point_params['cur_iter'] = i
         environment.prepare(new_point_params, lsh_params)
-        cur_res.append(exp_func(environment.points[0], environment.nn_checker, environment.lsh, rng=rng, **experiment_params))
+        if experiment_params.get('random_origin'):
+            origin_ind = rng.choice(len(environment.points))
+        else:
+            origin_ind = 0
+        cur_res.append(exp_func(environment.points[origin_ind], environment.nn_checker, environment.lsh, rng=rng, **experiment_params))
     
     if data_dir is not None:
         with open(name, 'wb') as handle:
