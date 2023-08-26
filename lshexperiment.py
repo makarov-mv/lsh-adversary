@@ -8,6 +8,7 @@ import hashlib
 import scipy.stats
 from sklearn.datasets import fetch_openml
 import pandas as pd
+import scipy
 
 def get_msweb():
     # get the data here
@@ -52,6 +53,10 @@ def l1_norm(a):
 
 def l1_norm_int(a):
     return int(np.rint(np.abs(a).sum()))
+
+def get_most_isolated_point(points):
+    distances = scipy.spatial.distance.squareform(scipy.spatial.distance.pdist(points, metric='cityblock'))
+    return (distances + np.eye(distances.shape[0]) * distances.max()).min(axis=0).argmax()
 
 class HammingLSH:
     def __init__(self, points, r1, r2, delta=None, l=None, random_gen=None, **kwargs):
@@ -143,11 +148,18 @@ class Environment:
 #         self._point_type = None
         self._point_params = None
         self._lsh_params = None
+        self._most_isolated_point = None # keep it lazily computed
+
+    def get_most_isolated_point(self):
+        if self._most_isolated_point is None:
+            self._most_isolated_point = get_most_isolated_point(self.points)
+        return self._most_isolated_point
         
     def prepare(self, point_params, lsh_params):
         need_to_change_points = point_params != self._point_params
         need_to_change_lsh = need_to_change_points or self._lsh_params != lsh_params
         if need_to_change_points:
+            self._most_isolated_point = None
             self._point_params = point_params
             if self._point_params['point_type'] == "zero":
                 self.points = np.zeros((point_params['n'], point_params['d']), dtype=int)
@@ -155,7 +167,8 @@ class Environment:
             elif self._point_params['point_type'] == "random":
                 seed = int_repr(point_params)
                 rng = np.random.default_rng(seed=seed)
-                self.points = rng.binomial(1, 0.5, size=(point_params['n'], point_params['d']))
+                prob = self._point_params.get('sample_probability', 1/2)
+                self.points = rng.binomial(1, prob, size=(point_params['n'], point_params['d']))
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
             elif self._point_params['point_type'] == "mnist_binary":
                 assert point_params['d'] == 784
@@ -319,7 +332,8 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
     seed = int_repr(experiment_params, point_params, lsh_params)
     rng = np.random.default_rng(seed)
     
-    
+    assert not (experiment_params.get('origin', 'isolated') and experiment_params.get('change_points', False))
+
     if experiment_params['alg_type'] == "adaptive":
         exp_func = run_adaptive_alg
     elif experiment_params['alg_type'] == "random":
@@ -330,10 +344,15 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
         if experiment_params.get('change_points', False):
             new_point_params['cur_iter'] = i
         environment.prepare(new_point_params, lsh_params)
-        if experiment_params.get('random_origin'):
-            origin_ind = rng.choice(len(environment.points))
-        else:
-            origin_ind = 0
+        match experiment_params.get('origin', 'first'):
+            case 'first':
+                origin_ind = 0
+            case 'random':
+                origin_ind = rng.choice(len(environment.points))
+            case 'isolated':
+                origin_ind = environment.get_most_isolated_point()
+            case _:
+                assert False
         cur_res.append(exp_func(environment.points[origin_ind], environment.nn_checker, environment.lsh, rng=rng, **experiment_params))
     
     if data_dir is not None:
