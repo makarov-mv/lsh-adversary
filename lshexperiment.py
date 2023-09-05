@@ -39,6 +39,17 @@ def get_mushroom():
     mushroom_data = fetch_openml(data_id=24, parser='auto')
     return pd.get_dummies(mushroom_data.data).to_numpy(dtype=int)
 
+def distort_dataset(points, target_dimension):
+    if points.shape[1] > target_dimension:
+        seed = 123
+        rng = np.random.default_rng(seed=seed)
+        mask = rng.choice(points.shape[1], size=target_dimension, replace=False)
+        return points[:, mask]
+    if points.shape[1] < target_dimension:
+        points = np.tile(points, -(-target_dimension // points.shape[1]))[:, :target_dimension]
+        return points
+    return points
+
 def hash_repr(*params):
     m = hashlib.sha256()
     for p in params:
@@ -171,27 +182,32 @@ class Environment:
                 self.points = rng.binomial(1, prob, size=(point_params['n'], point_params['d']))
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
             elif self._point_params['point_type'] == "mnist_binary":
+                # base dim 784
                 assert point_params['d'] == 784
                 assert point_params['n'] <= 70000
                 
                 mnist_points = get_mnist_binary()
+                mnist_points = distort_dataset(mnist_points, point_params['d'])
 
                 self.points = mnist_points[:point_params['n']]
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
             elif self._point_params['point_type'] == "msweb":
+                # base dim 294
                 assert point_params['d'] == 294
                 assert point_params['n'] <= 32711
 
                 msweb_points = get_msweb()
-                
+                msweb_points = distort_dataset(msweb_points, point_params['d'])
+
                 self.points = msweb_points[:point_params['n']]
                 self.nn_checker = skln.KDTree(self.points, metric='l1')  
             elif self._point_params['point_type'] == "mushroom":
+                # base dim 116
                 assert point_params['d'] == 116
                 assert point_params['n'] <= 8124
 
                 mush_points = get_mushroom()
-                
+                mush_points = distort_dataset(mush_points, point_params['d'])
                 self.points = mush_points[:point_params['n']]
                 self.nn_checker = skln.KDTree(self.points, metric='l1')            
             else:
@@ -210,7 +226,9 @@ def flip_bits(p, mask):
 
 def run_adaptive_alg(z, nn_checker, lsh, target_distance, t=None, max_resamples=1, max_queries=None, rng=None, **kwargs):
     assert rng is not None
-    
+    if target_distance is None:
+        target_distance = lsh._r1
+
     if t is None:
         t = target_distance
     found_error = False
@@ -288,6 +306,9 @@ def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=No
     assert rng is not None
     assert max_queries is not None
     
+    if target_distance is None:
+        target_distance = lsh._r1
+
     found_error = False
     error_query = None
     total_queries = 0
@@ -332,7 +353,7 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
     seed = int_repr(experiment_params, point_params, lsh_params)
     rng = np.random.default_rng(seed)
     
-    assert not (experiment_params.get('origin', 'isolated') and experiment_params.get('change_points', False))
+    assert not (experiment_params.get('origin', 'random') == 'isolated' and experiment_params.get('change_points', False))
 
     if experiment_params['alg_type'] == "adaptive":
         exp_func = run_adaptive_alg
@@ -383,12 +404,52 @@ def process_results(res, batch_count=10):
             #err_queries[i] = np.std(queries)
     return (success_prob, err_succ_prob), (mean_queries, err_queries)
 
-def run_basic_grid_experiment(grid, exp_param_name, environment, point_params, lsh_params, exp_params, data_dir, disable_tqdm=False):
+def prepare_plot_data(res, grid, batch_count=10):
+    prob_data, query_data = process_results(res, batch_count)
+    return grid, prob_data, query_data
+
+def process_results_with_grid(res, dist_grid, lsh_params, batch_count=10):
+    prob_data, query_data = process_results(res, batch_count)
+    dist_grid = lsh_params['r1'] - dist_grid
+    return dist_grid, prob_data, query_data
+
+def run_basic_grid_experiment(grid, param_name, environment, point_params, lsh_params, exp_params, data_dir, target="experiment", disable_tqdm=False):
     res = []
-    new_exp_param = exp_params.copy()    
+    new_exp_param = exp_params.copy()
+    new_point_params = point_params.copy()
+    new_lsh_params = lsh_params.copy()
     
     for val in tqdm(grid, disable=disable_tqdm):
-        new_exp_param[exp_param_name] = val
-        cur_res = run_experiments(environment, point_params, lsh_params, new_exp_param, data_dir=data_dir)
+        if target == "experiment":
+            new_exp_param[param_name] = val
+        elif target == "points":
+            new_point_params[param_name] = val
+        elif target == "lsh":
+            new_lsh_params[param_name] = val
+        else:
+            assert False
+        
+        cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
+        res.append(cur_res)
+    return res
+
+def run_advanced_grid_experiment(grids, param_names, targets, environment, point_params, lsh_params, exp_params, data_dir, disable_tqdm=False):
+    res = []
+    
+    for vals in tqdm(list(zip(*grids)), disable=disable_tqdm):
+        new_exp_param = exp_params.copy()
+        new_point_params = point_params.copy()
+        new_lsh_params = lsh_params.copy()
+        for target, val, param_name in zip(targets, vals, param_names):
+            if target == "experiment":
+                new_exp_param[param_name] = val
+            elif target == "points":
+                new_point_params[param_name] = val
+            elif target == "lsh":
+                new_lsh_params[param_name] = val
+            else:
+                assert False
+        # print(new_point_params, new_lsh_params, new_exp_param)
+        cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
         res.append(cur_res)
     return res
