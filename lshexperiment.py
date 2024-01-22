@@ -3,12 +3,14 @@ from matplotlib import pyplot as plt
 import sklearn.neighbors as skln
 import pickle
 import os
-from tqdm.notebook import tqdm
+from tqdm.autonotebook import tqdm
 import hashlib
 import scipy.stats
 from sklearn.datasets import fetch_openml
 import pandas as pd
 import scipy
+
+CODE_VER = 2
 
 def get_msweb():
     # get the data here
@@ -87,12 +89,15 @@ class HammingLSH:
             self._l = int(np.ceil(np.power(self._n, self._rho) * np.log2(1/delta)))
         else:
             self._l = l
-            
+        self._kwargs = kwargs.copy()
         self._populate(points, random_gen)
         
     def _populate(self, points, random_gen):
         self._buckets = [dict() for i in range(self._l)]
-        self._g_support = [random_gen.choice(self._d, self._k, replace=True) for i in range(self._l)]
+        if self._kwargs.get('unique_support', False):
+            self._g_support = [random_gen.choice(self._d, np.min((self._d,self._k)), replace=False) for i in range(self._l)]
+        else:
+            self._g_support = [random_gen.choice(self._d, self._k, replace=True) for i in range(self._l)]
         for p in points:
             for i in range(self._l):
                 bucket = p[self._g_support[i]]
@@ -171,7 +176,7 @@ class Environment:
         need_to_change_lsh = need_to_change_points or self._lsh_params != lsh_params
         if need_to_change_points:
             self._most_isolated_point = None
-            self._point_params = point_params
+            self._point_params = point_params.copy()
             if self._point_params['point_type'] == "zero":
                 self.points = np.zeros((point_params['n'], point_params['d']), dtype=int)
                 self.nn_checker = ZeroChecker(point_params['d'])
@@ -213,7 +218,7 @@ class Environment:
             else:
                 raise ValueError
         if need_to_change_lsh:
-            self._lsh_params = lsh_params
+            self._lsh_params = lsh_params.copy()
             seed = int_repr(lsh_params)
             rng = np.random.default_rng(seed=seed)
             self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
@@ -343,6 +348,8 @@ def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=No
 def run_experiments(environment, point_params, lsh_params, experiment_params, data_dir):
     if data_dir is not None:
         name = hash_repr(experiment_params, point_params, lsh_params).hexdigest()
+        if CODE_VER > 0:
+            name = name + "_ver_" + str(CODE_VER)
         name = name + ".pickle"
         name = os.path.join(data_dir, name)
         if os.path.exists(name):
@@ -361,10 +368,13 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
         exp_func = run_random_alg
     cur_res = []
     new_point_params = point_params.copy()
+    new_lsh_params = lsh_params.copy()
     for i in range(experiment_params['iter_num']):
-        if experiment_params.get('change_points', False):
+        if experiment_params.get('change_points', True):
             new_point_params['cur_iter'] = i
-        environment.prepare(new_point_params, lsh_params)
+        if experiment_params.get('change_lsh', True):
+            new_lsh_params['cur_iter'] = i
+        environment.prepare(new_point_params, new_lsh_params)
         match experiment_params.get('origin', 'first'):
             case 'first':
                 origin_ind = 0
@@ -377,8 +387,13 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
         cur_res.append(exp_func(environment.points[origin_ind], environment.nn_checker, environment.lsh, rng=rng, **experiment_params))
     
     if data_dir is not None:
-        with open(name, 'wb') as handle:
-            pickle.dump(cur_res, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            with open(name, 'wb') as handle:
+                pickle.dump(cur_res, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        except KeyboardInterrupt as e:
+            # just in case pickle failed to write everything
+            os.remove(name)
+            raise(e)
     
     return cur_res
 
@@ -390,11 +405,11 @@ def process_results(res, batch_count=10):
     for i, v in enumerate(res):
         successes = np.array([int(e[0]) for e in v])
         success_prob.append(successes.mean())
-        err_succ_prob.append(scipy.stats.sem(successes))
+        err_succ_prob.append(2 * scipy.stats.sem(successes)) # 95% confidence
         
         queries = np.array([e[1] for e in v])
         mean_queries[i] = queries.mean()
-        err_queries[i] = scipy.stats.sem(queries)
+        err_queries[i] = 2 * scipy.stats.sem(queries) # 95% confidence
         
         #if len(queries) == 0:
             #mean_queries[i] = np.nan
