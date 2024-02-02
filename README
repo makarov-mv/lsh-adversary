@@ -1,0 +1,30 @@
+# Dataset preparation
+
+Before running the experiments you need to get the Anonymous Microsoft Web Data dataset here:
+https://data.world/uci/anonymous-microsoft-web-data
+
+Create folders datasets/anonymous+microsoft+web+data.
+Download the file anonymous-msweb.data.csv, rename it to anonymous-msweb.data and put it inside the folders, so that the resulting path is
+datasets/anonymous+microsoft+web+data/anonymous-msweb.data.
+
+# Running the experiments
+
+We recommend running the experiments on a machine with multiple cores.
+To create the same graphs as presented in the paper do the following.
+
+1. Prepare the data. Run the following commands:
+python3 script_distr_all.py basic <number_of_processes>
+
+python3 script_distr_all.py easysets <number_of_processes>
+python3 script_distr_all.py mnist <number_of_processes>
+python3 script_distr_all.py msweb <number_of_processes>
+
+python3 script_distr_all.py infliction <number_of_processes>
+python3 script_distr_all.py querynum <number_of_processes>
+
+where <number_of_processes> is the number of CPU cores you wish to use.
+
+Running all the scripts will create "data" folder, which is required for the next step.
+
+2. Making plots.
+Open plots.ipynb in Jupyter Notebook and run all cells. The plots will be presented in the notebook itself, as well as saved in the "figs" folder.

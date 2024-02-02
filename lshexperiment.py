@@ -152,16 +152,9 @@ class ZeroChecker:
 
 class Environment:
     def __init__(self):
-#         self.n = None
-#         self.d = None
         self.points = None
         self.nn_checker = None
         self.lsh = None
-#         self._point_seed = None
-#         self._lsh_seed = None
-#         self._point_rng = None
-#         self._lsh_rng = None
-#         self._point_type = None
         self._point_params = None
         self._lsh_params = None
         self._most_isolated_point = None # keep it lazily computed
@@ -171,7 +164,7 @@ class Environment:
             self._most_isolated_point = get_most_isolated_point(self.points)
         return self._most_isolated_point
         
-    def prepare(self, point_params, lsh_params):
+    def prepare(self, point_params, lsh_params, rng):
         need_to_change_points = point_params != self._point_params
         need_to_change_lsh = need_to_change_points or self._lsh_params != lsh_params
         if need_to_change_points:
@@ -181,8 +174,6 @@ class Environment:
                 self.points = np.zeros((point_params['n'], point_params['d']), dtype=int)
                 self.nn_checker = ZeroChecker(point_params['d'])
             elif self._point_params['point_type'] == "random":
-                seed = int_repr(point_params)
-                rng = np.random.default_rng(seed=seed)
                 prob = self._point_params.get('sample_probability', 1/2)
                 self.points = rng.binomial(1, prob, size=(point_params['n'], point_params['d']))
                 self.nn_checker = skln.KDTree(self.points, metric='l1')
@@ -219,8 +210,6 @@ class Environment:
                 raise ValueError
         if need_to_change_lsh:
             self._lsh_params = lsh_params.copy()
-            seed = int_repr(lsh_params)
-            rng = np.random.default_rng(seed=seed)
             self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
 
 class OutOfQueriesError(Exception):
@@ -320,8 +309,6 @@ def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=No
 
     def make_query(q):
         nonlocal total_queries
-#         if max_queries is not None and total_queries >= max_queries:
-#             raise OutOfQueriesError
         total_queries += 1
         res2 = lsh.query(q)
         return res2
@@ -374,7 +361,7 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
             new_point_params['cur_iter'] = i
         if experiment_params.get('change_lsh', True):
             new_lsh_params['cur_iter'] = i
-        environment.prepare(new_point_params, new_lsh_params)
+        environment.prepare(new_point_params, new_lsh_params, rng)
         match experiment_params.get('origin', 'first'):
             case 'first':
                 origin_ind = 0
@@ -391,7 +378,6 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
             with open(name, 'wb') as handle:
                 pickle.dump(cur_res, handle, protocol=pickle.HIGHEST_PROTOCOL)
         except KeyboardInterrupt as e:
-            # just in case pickle failed to write everything
             os.remove(name)
             raise(e)
     
@@ -405,18 +391,12 @@ def process_results(res, batch_count=10):
     for i, v in enumerate(res):
         successes = np.array([int(e[0]) for e in v])
         success_prob.append(successes.mean())
-        err_succ_prob.append(2 * scipy.stats.sem(successes)) # 95% confidence
+        err_succ_prob.append(3 * scipy.stats.sem(successes)) # 99.5% confidence
         
         queries = np.array([e[1] for e in v])
         mean_queries[i] = queries.mean()
-        err_queries[i] = 2 * scipy.stats.sem(queries) # 95% confidence
+        err_queries[i] = 3 * scipy.stats.sem(queries) # 99.5% confidence
         
-        #if len(queries) == 0:
-            #mean_queries[i] = np.nan
-            #err_queries[i] = np.nan
-        #else:
-            #mean_queries[i] = np.mean(queries)
-            #err_queries[i] = np.std(queries)
     return (success_prob, err_succ_prob), (mean_queries, err_queries)
 
 def prepare_plot_data(res, grid, batch_count=10):
@@ -428,34 +408,22 @@ def process_results_with_grid(res, dist_grid, lsh_params, batch_count=10):
     dist_grid = lsh_params['r1'] - dist_grid
     return dist_grid, prob_data, query_data
 
-def run_basic_grid_experiment(grid, param_name, environment, point_params, lsh_params, exp_params, data_dir, target="experiment", disable_tqdm=False):
-    res = []
-    new_exp_param = exp_params.copy()
-    new_point_params = point_params.copy()
-    new_lsh_params = lsh_params.copy()
-    
-    for val in tqdm(grid, disable=disable_tqdm):
-        if target == "experiment":
-            new_exp_param[param_name] = val
-        elif target == "points":
-            new_point_params[param_name] = val
-        elif target == "lsh":
-            new_lsh_params[param_name] = val
-        else:
-            assert False
-        
-        cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
-        res.append(cur_res)
-    return res
-
-def run_advanced_grid_experiment(grids, param_names, targets, environment, point_params, lsh_params, exp_params, data_dir, disable_tqdm=False):
-    res = []
-    
-    for vals in tqdm(list(zip(*grids)), disable=disable_tqdm):
+def run_basic_grid_experiment(grid, param_name, environment, point_params, lsh_params, exp_params, data_dir, target="experiment", disable_tqdm=False, batches=None):
+    if batches is None:
+        batch_count = 1
+    else:
+        batch_count = batches
+    all_res = []
+    for batch_num in tqdm(np.arange(batch_count), miniters=1,disable=disable_tqdm or batches is None):
+        res = []
         new_exp_param = exp_params.copy()
         new_point_params = point_params.copy()
         new_lsh_params = lsh_params.copy()
-        for target, val, param_name in zip(targets, vals, param_names):
+        
+        if batches is not None:
+            new_exp_param['iter_batch'] = batch_num
+        
+        for val in tqdm(grid, miniters=1, disable=disable_tqdm, leave=batches is None):
             if target == "experiment":
                 new_exp_param[param_name] = val
             elif target == "points":
@@ -464,7 +432,49 @@ def run_advanced_grid_experiment(grids, param_names, targets, environment, point
                 new_lsh_params[param_name] = val
             else:
                 assert False
-        # print(new_point_params, new_lsh_params, new_exp_param)
-        cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
-        res.append(cur_res)
-    return res
+            
+            cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
+            res.append(cur_res)
+        
+        all_res.append(res)
+    
+    final_res = []
+    for i in range(len(all_res[0])):
+        final_res.append([])
+        for j in range(len(all_res)):
+            final_res[i].extend(all_res[j][i])
+    return final_res
+
+def run_advanced_grid_experiment(grids, param_names, targets, environment, point_params, lsh_params, exp_params, data_dir, disable_tqdm=False, batches=None):
+    if batches is None:
+        batch_count = 1
+    else:
+        batch_count = batches
+    all_res = []
+    for batch_num in tqdm(np.arange(batch_count), miniters=1,disable=disable_tqdm or batches is None):
+        res = []
+        for vals in tqdm(list(zip(*grids)), miniters=1, disable=disable_tqdm, leave=batches is None):
+            new_exp_param = exp_params.copy()
+            new_point_params = point_params.copy()
+            new_lsh_params = lsh_params.copy()
+            if batches is not None:
+                new_exp_param['iter_batch'] = batch_num
+
+            for target, val, param_name in zip(targets, vals, param_names):
+                if target == "experiment":
+                    new_exp_param[param_name] = val
+                elif target == "points":
+                    new_point_params[param_name] = val
+                elif target == "lsh":
+                    new_lsh_params[param_name] = val
+                else:
+                    assert False
+            cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
+            res.append(cur_res)
+        all_res.append(res)
+    final_res = []
+    for i in range(len(all_res[0])):
+        final_res.append([])
+        for j in range(len(all_res)):
+            final_res[i].extend(all_res[j][i])
+    return final_res
