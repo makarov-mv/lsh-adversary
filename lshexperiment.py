@@ -137,6 +137,56 @@ class HammingLSH:
             if np.array_equal(z, z_buck):
                 ans += 1
         return ans
+    
+class HammingLSHLargeBucket:
+    def __init__(self, points, r1, r2, delta=None, l=None, random_gen=None, **kwargs):  
+        assert l is None or delta is None
+        assert np.issubdtype(points.dtype, np.signedinteger)
+        assert ((points == 0) | (points == 1)).all()
+        assert random_gen is not None
+        
+        self._d = points.shape[1]
+        self._n = points.shape[0]
+        self._dtype = points.dtype
+        self._r1 = r1
+        self._r2 = r2
+        self._k = int(np.floor(-np.log(self._n) / np.log(1 - r2 / self._d)))
+        self._rho = np.log(1 - r1/self._d) / np.log(1 - r2/self._d)
+        if l is None:
+            self._l = int(np.ceil(np.power(self._n, self._rho) * np.log2(1/delta)))
+        else:
+            self._l = l
+        self._kwargs = kwargs.copy()
+        self._populate(points, random_gen)
+        
+    def _populate(self, points, random_gen):
+        self._buckets = [dict() for i in range(self._l)]
+        if self._kwargs.get('unique_support', False):
+            self._g_support = [random_gen.choice(self._d, np.min((self._d,self._k)), replace=False) for i in range(self._l)]
+        else:
+            self._g_support = [random_gen.choice(self._d, self._k, replace=True) for i in range(self._l)]
+        for p in points:
+            for i in range(self._l):
+                bucket = p[self._g_support[i]]
+                if not bucket.tobytes() in self._buckets[i]:
+                    self._buckets[i][bucket.tobytes()] = [p]
+                else:
+                    self._buckets[i][bucket.tobytes()].append(p)
+    
+    def _validate_point(self, p):
+        assert p.dtype == self._dtype
+        assert ((p == 0) | (p == 1)).all()
+        assert len(p) == self._d
+        
+    def query(self, q):
+        self._validate_point(q)
+        for i in range(self._l):
+            bucket = q[self._g_support[i]]
+            
+            for p in self._buckets[i].get(bucket.tobytes(), []):
+                if np.linalg.norm(p - q, 1) <= self._r2:
+                    return p
+        return None
 
 class ZeroChecker:
     def __init__(self, d):
@@ -205,13 +255,18 @@ class Environment:
                 mush_points = get_mushroom()
                 mush_points = distort_dataset(mush_points, point_params['d'])
                 self.points = mush_points[:point_params['n']]
-                self.nn_checker = skln.KDTree(self.points, metric='l1')            
+                self.nn_checker = skln.KDTree(self.points, metric='l1')
             else:
                 raise ValueError
         if need_to_change_lsh:
             self._lsh_params = lsh_params.copy()
-            self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
-
+            if lsh_params.get('buckets', 1) == 'max':
+                self.lsh = HammingLSHLargeBucket(self.points, random_gen=rng, **lsh_params)
+            elif lsh_params.get('buckets', 1) == 1:
+                self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
+            else:
+                raise ValueError
+            
 class OutOfQueriesError(Exception):
     pass
 
@@ -331,6 +386,22 @@ def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=No
         return found_error, total_queries, l1_norm(error_query), error_query
     else:
         return found_error, total_queries, None, None
+
+def run_experiments_batches(environment, point_params, lsh_params, experiment_params, data_dir, batches):
+    res = []
+    for batch_num in np.arange(batches):
+        new_exp_param = experiment_params.copy()
+        new_point_params = point_params.copy()
+        new_lsh_params = lsh_params.copy()
+        
+        new_exp_param['iter_batch'] = batch_num
+    
+            
+        cur_res = run_experiments(environment, new_point_params, new_lsh_params, new_exp_param, data_dir=data_dir)
+        res.extend(cur_res)
+        
+    return res
+
 
 def run_experiments(environment, point_params, lsh_params, experiment_params, data_dir):
     if data_dir is not None:
