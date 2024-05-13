@@ -69,6 +69,46 @@ def run_infliction(iter_num=DEFAULT_ITER_COUNT, iter_batch=0):
         res = run_basic_grid_experiment(grid, 'target_distance', env, point_params, new_lsh_params, exp_params, data_dir=DATA_DIR, disable_tqdm=True)
         all_res.append(res)
 
+def run_ensemble(iter_batch):
+    env = Environment()
+
+
+    point_params = {
+        'n': 10000,
+        'd': 300,
+        'point_type': "zero",
+        'seed_offset': 0
+    }
+
+    lsh_params = {
+        'ensemble_size': 1,
+        'delta': 1/2,
+        'seed_offset': 4,
+        'r1': point_params['d'] // 10,
+        'r2': point_params['d'] // 5
+    }
+
+    exp_params = {
+        'alg_type': 'adaptive',
+        'change_lsh': True,
+        'iter_num': DEFAULT_ITER_COUNT,
+        'iter_batch': iter_batch,
+        'seed_offset': 0,
+        'target_distance': lsh_params['r1'],
+    }
+
+    size_list=np.array([2, 4])
+
+
+    grid = np.arange(0, lsh_params['r2'], 1)
+
+    all_res = []
+
+    for sz in size_list:
+        new_lsh_params = lsh_params.copy()
+        new_lsh_params['ensemble_size'] = sz
+        res = run_basic_grid_experiment(grid, 'target_distance', env, point_params, new_lsh_params, exp_params, data_dir=DATA_DIR, disable_tqdm=True)
+        all_res.append(res)
 
 def run_basic(iter_batch):
     env = Environment()
@@ -466,6 +506,87 @@ def run_querynum(iter_batch):
         cur_res = run_experiments(env, point_params, new_lsh_params, new_exp_params, data_dir=DATA_DIR)
         delta_rand_res.append(cur_res)
 
+def run_querynum_generic(iter_batch, point_params=None):
+    env = Environment()
+
+    lsh_params = {
+        'buckets': 'max',
+        'delta': 1/2,
+        'seed_offset': 0,
+        'r1': point_params['d'] // 10,
+        'r2': point_params['d'] // 5
+    }
+
+    exp_params = {
+        'alg_type': 'random',
+        'change_lsh': True,
+        'change_points': True,
+        'iter_num': DEFAULT_ITER_COUNT,
+        'iter_batch': iter_batch,
+        'seed_offset': 0,
+        'target_distance': lsh_params['r1'],
+        'max_queries': 80000,
+        'max_resamples': 40000,
+    }
+
+    delta_list = np.logspace(1, 8, 8, endpoint=True, base=1/2)
+    delta_rand_res = []
+
+    for dl in tqdm(delta_list, leave=False, miniters=1, disable=True):
+        new_lsh_params = lsh_params.copy()
+        new_lsh_params['delta'] = dl
+        new_exp_params = exp_params.copy()
+        new_exp_params['alg_type'] = 'random'
+        cur_res = run_experiments(env, point_params, new_lsh_params, new_exp_params, data_dir=DATA_DIR)
+        delta_rand_res.append(cur_res)
+
+
+def run_querynum_mushroom(iter_batch):
+    point_params = {
+        'n': 8124,
+        'd': 116,
+        'point_type': "mushroom",
+        'seed_offset': 0
+    }
+    return run_querynum_generic(iter_batch, point_params)
+
+def run_querynum_mnist(iter_batch):
+    point_params = {
+        'n': 10000,
+        'd': 784,
+        'point_type': "mnist_binary",
+        'seed_offset': 0
+    }
+    return run_querynum_generic(iter_batch, point_params)
+        
+def run_querynum_msweb(iter_batch):
+    point_params = {
+        'n': 10000,
+        'd': 294,
+        'point_type': "msweb",
+        'seed_offset': 0
+    }
+    return run_querynum_generic(iter_batch, point_params)
+
+def run_querynum_sparse(iter_batch):
+    point_params = {
+        'n': 10000,
+        'd': 300,
+        'point_type': "random",
+        'sample_probability': 1/15,
+        'seed_offset': 0
+    }
+    return run_querynum_generic(iter_batch, point_params)
+
+def run_querynum_zero(iter_batch):
+    point_params = {
+        'n': 10000,
+        'd': 300,
+        'point_type': "zero",
+        'seed_offset': 0
+    }
+    return run_querynum_generic(iter_batch, point_params)
+
 import sys
 from multiprocessing import Pool
 
@@ -498,6 +619,18 @@ if __name__ == "__main__":
         func = run_msweb
     elif sys.argv[1] == 'querynum':
         func = run_querynum
+    elif sys.argv[1] == 'querynum_mnist':
+        func = run_querynum_mnist
+    elif sys.argv[1] == 'querynum_msweb':
+        func = run_querynum_msweb
+    elif sys.argv[1] == 'querynum_mushroom':
+        func = run_querynum_mushroom
+    elif sys.argv[1] == 'querynum_zero':
+        func = run_querynum_zero
+    elif sys.argv[1] == 'querynum_sparse':
+        func = run_querynum_sparse
+    elif sys.argv[1] == 'ensemble':
+        func = run_ensemble
     else:
         raise RuntimeError("Unkown experiment name")
  

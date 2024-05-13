@@ -188,6 +188,46 @@ class HammingLSHLargeBucket:
                     return p
         return None
 
+class HammingLSHEnsemble:
+    def __init__(self, points, ensemble_size=None, random_gen=None, **kwargs):  
+        assert ensemble_size is not None
+        assert random_gen is not None
+        
+        self._d = points.shape[1]
+        self._n = points.shape[0]
+        self._dtype = points.dtype
+        self._r1 = kwargs["r1"]
+        self._r2 = kwargs["r2"]
+
+        self._num_copies = ensemble_size
+        self._random_gen = random_gen
+        self._kwargs = kwargs.copy()
+        self._populate(points, random_gen)
+        
+    def _populate(self, points, random_gen):
+        self._copies = []
+        for i in range(self._num_copies):
+            self._copies.append(HammingLSHLargeBucket(points=points, random_gen=random_gen, **self._kwargs))
+    
+    # def _validate_point(self, p):
+    #     assert p.dtype == self._dtype
+    #     assert ((p == 0) | (p == 1)).all()
+    #     assert len(p) == self._d
+        
+    def query(self, q):
+        # res = []
+        # for lsh in self._copies:
+        #     a = lsh.query(q)
+        #     if a is not None:
+        #         res.append(a)
+        # if len(res) == 0:
+        #     return None
+        # else:
+        #     return self._random_gen.choice(res)
+
+        return self._copies[self._random_gen.choice(self._num_copies)].query(q)
+
+
 class ZeroChecker:
     def __init__(self, d):
         self._d = d
@@ -260,12 +300,16 @@ class Environment:
                 raise ValueError
         if need_to_change_lsh:
             self._lsh_params = lsh_params.copy()
-            if lsh_params.get('buckets', 1) == 'max':
-                self.lsh = HammingLSHLargeBucket(self.points, random_gen=rng, **lsh_params)
-            elif lsh_params.get('buckets', 1) == 1:
-                self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
+            if "ensemble_size" in lsh_params.keys():
+                assert 'buckets' not in lsh_params.keys()
+                self.lsh = HammingLSHEnsemble(self.points, random_gen=rng, **lsh_params)
             else:
-                raise ValueError
+                if lsh_params.get('buckets', 1) == 'max':
+                    self.lsh = HammingLSHLargeBucket(self.points, random_gen=rng, **lsh_params)
+                elif lsh_params.get('buckets', 1) == 1:
+                    self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
+                else:
+                    raise ValueError
             
 class OutOfQueriesError(Exception):
     pass
