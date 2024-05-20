@@ -106,19 +106,22 @@ class Environment:
                 raise ValueError
         if need_to_change_lsh:
             self._lsh_params = lsh_params.copy()
-            if "ensemble_size" in lsh_params.keys():
-                assert 'buckets' not in lsh_params.keys()
-                if "query_samples" not in lsh_params.keys():
-                    self.lsh = HammingLSHEnsemble(self.points, random_gen=rng, **lsh_params)
-                else:
-                    self.lsh = HammingLSHDP(self.points, random_gen=rng, **lsh_params)
+            if lsh_params.get("use_ade", False):
+                self.lsh = ADENN(self.points, random_gen=rng, **lsh_params)
             else:
-                if lsh_params.get('buckets', 1) == 'max':
-                    self.lsh = HammingLSHLargeBucket(self.points, random_gen=rng, **lsh_params)
-                elif lsh_params.get('buckets', 1) == 1:
-                    self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
+                if "ensemble_size" in lsh_params.keys():
+                    assert 'buckets' not in lsh_params.keys()
+                    if "query_samples" not in lsh_params.keys():
+                        self.lsh = HammingLSHEnsemble(self.points, random_gen=rng, **lsh_params)
+                    else:
+                        self.lsh = HammingLSHDP(self.points, random_gen=rng, **lsh_params)
                 else:
-                    raise ValueError
+                    if lsh_params.get('buckets', 1) == 'max':
+                        self.lsh = HammingLSHLargeBucket(self.points, random_gen=rng, **lsh_params)
+                    elif lsh_params.get('buckets', 1) == 1:
+                        self.lsh = HammingLSH(self.points, random_gen=rng, **lsh_params)
+                    else:
+                        raise ValueError
             
 class OutOfQueriesError(Exception):
     pass
@@ -200,9 +203,20 @@ def run_adaptive_alg(z, nn_checker, lsh, target_distance, t=None, max_resamples=
     except OutOfQueriesError:
         pass
     if found_error:
-        return found_error, total_queries, l1_norm(error_query), error_query
+        if kwargs.get("control_accuracy", False):
+            resample_failures = 0
+            for i in range(kwargs['control_resamples']):
+                p = lsh.query(error_query)
+                if p is None:
+                    resample_failures += 1
+            return found_error, total_queries, l1_norm(error_query), error_query, resample_failures
+        else:
+            return found_error, total_queries, l1_norm(error_query), error_query
     else:
-        return found_error, total_queries, None, None
+        if kwargs.get("control_accuracy", False):
+            return found_error, total_queries, None, None, 0
+        else:
+            return found_error, total_queries, None, None
 
 def run_random_alg(z, nn_checker, lsh, target_distance, max_queries=None, rng=None, **kwargs):
     assert rng is not None
@@ -307,7 +321,7 @@ def run_experiments(environment, point_params, lsh_params, experiment_params, da
     
     return cur_res
 
-def process_results(res, batch_count=10):
+def process_results(res):
     success_prob = []
     err_succ_prob = []
     mean_queries = np.zeros(len(res))
@@ -322,6 +336,25 @@ def process_results(res, batch_count=10):
         err_queries[i] = 3 * scipy.stats.sem(queries) # 99.5% confidence
         
     return (success_prob, err_succ_prob), (mean_queries, err_queries)
+
+def process_results_with_resamples(res, aggregation, **kwargs):
+    means = np.zeros(len(res))
+    errs = np.zeros(len(res))
+    for i, v in enumerate(res):
+        if aggregation == "query":
+            values = np.array([e[1] for e in v])
+        elif aggregation == "success":
+            values = np.array([int(e[0]) for e in v])
+        elif aggregation == "average": # mean fraction of resample failures
+            values = np.array([e[4] / kwargs['resamples'] for e in v])
+        elif aggregation == 'threshold':
+            minfail = kwargs['resamples'] * kwargs['threshold']
+            values = np.array([0 if e[4] < minfail else 1 for e in v])
+        means[i] = values.mean()
+        errs[i] = 3 * scipy.stats.sem(values) # 99.5% confidence
+        
+    return means, errs
+
 
 def prepare_plot_data(res, grid, batch_count=10):
     prob_data, query_data = process_results(res, batch_count)

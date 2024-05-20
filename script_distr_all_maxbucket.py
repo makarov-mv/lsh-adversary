@@ -25,13 +25,16 @@ def save_fig(name, fig=plt):
 plt.rcParams["figure.figsize"] = (8,3)
 plt.rcParams['figure.dpi'] = 300
 
-def run_infliction(iter_num=DEFAULT_ITER_COUNT, iter_batch=0):
+R1_FRAC_POST_EXP = 0.15
+R2_FRAC_POST_EXP = 0.3
+
+def run_infliction(iter_batch):
     env = Environment()
 
     point_params = {
         'n': 10000,
         'd': 300,
-        'point_type': "zero",
+        'point_type': "random",
         'seed_offset': 0
     }
 
@@ -39,20 +42,21 @@ def run_infliction(iter_num=DEFAULT_ITER_COUNT, iter_batch=0):
         'buckets': 'max',
         'delta': 1/2,
         'seed_offset': 0,
-        'r1': point_params['d'] // 10,
-        'r2': point_params['d'] // 5
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
         'alg_type': 'adaptive',
         'change_lsh': True,
-        'iter_num': iter_num,
+        'iter_num': DEFAULT_ITER_COUNT,
         'iter_batch': iter_batch,
         'seed_offset': 0,
         'target_distance': lsh_params['r1'],
     }
 
-    help_list = np.arange(1, 14, 3)
+    # help_list = np.arange(1, 14, 3)
+    help_list = np.array([1 ,2, 3, 4, 5, 6, 7, 10, 13])
     delta_list = np.exp2(-help_list)
 
     my_rho = np.log(1 - lsh_params['r1']/point_params['d']) / np.log(1 - lsh_params['r2']/point_params['d'])
@@ -76,7 +80,7 @@ def run_ensemble(iter_batch):
     point_params = {
         'n': 10000,
         'd': 300,
-        'point_type': "zero",
+        'point_type': "random",
         'seed_offset': 0
     }
 
@@ -84,8 +88,8 @@ def run_ensemble(iter_batch):
         'ensemble_size': 1,
         'delta': 1/2,
         'seed_offset': 4,
-        'r1': point_params['d'] // 10,
-        'r2': point_params['d'] // 5
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -109,6 +113,90 @@ def run_ensemble(iter_batch):
         new_lsh_params['ensemble_size'] = sz
         res = run_basic_grid_experiment(grid, 'target_distance', env, point_params, new_lsh_params, exp_params, data_dir=DATA_DIR, disable_tqdm=True)
         all_res.append(res)
+
+def run_dp(iter_batch, query_samples):
+    env = Environment()
+
+
+    point_params = {
+        'n': 10000,
+        'd': 300,
+        'point_type': "random",
+        'seed_offset': 0
+    }
+
+    lsh_params = {
+        'ensemble_size': 4,
+        'delta': 1/2,
+        'query_samples': query_samples,
+        'privacy_epsilon': 1/2,
+        'seed_offset': 4,
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
+    }
+
+    exp_params = {
+        'alg_type': 'adaptive',
+        'change_lsh': True,
+        'iter_num': DEFAULT_ITER_COUNT,
+        'iter_batch': iter_batch,
+        'seed_offset': 0,
+        'target_distance': lsh_params['r1'],
+    }
+
+    size_list=np.array([4, 5, 6, 10])
+
+    grid = np.arange(0, lsh_params['r2'], 1)
+
+    all_res = []
+
+    for sz in size_list:
+        if sz < query_samples:
+            continue
+        new_lsh_params = lsh_params.copy()
+        new_lsh_params['ensemble_size'] = sz
+        res = run_basic_grid_experiment(grid, 'target_distance', env, point_params, new_lsh_params, exp_params, data_dir=DATA_DIR, disable_tqdm=True)
+        all_res.append(res)
+
+def run_ade(iter_batch):
+    env = Environment()
+
+    point_params = {
+        'n': 10000,
+        'd': 300,
+        'point_type': "random",
+        'seed_offset': 0
+    }
+
+    lsh_params = {
+        "use_ade": True,
+        'delta': 1/2,
+        'seed_offset': 4,
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
+    }
+
+    exp_params = {
+        'alg_type': 'adaptive',
+        'change_lsh': True,
+        'iter_num': DEFAULT_ITER_COUNT,
+        'iter_batch': iter_batch,
+        'seed_offset': 0,
+        'target_distance': lsh_params['r1'],
+    }
+
+    help_list = np.array([1, 2, 4])
+    delta_list = np.exp2(-help_list)
+
+    grid = np.arange(0, lsh_params['r2'], 1)
+
+    all_res_ade = []
+
+    for dl in delta_list:
+        new_lsh_params = lsh_params.copy()
+        new_lsh_params['delta'] = dl
+        res = run_basic_grid_experiment(grid, 'target_distance', env, point_params, new_lsh_params, exp_params, data_dir=DATA_DIR, disable_tqdm=True)
+        all_res_ade.append(res)
 
 def run_basic(iter_batch):
     env = Environment()
@@ -190,8 +278,8 @@ def run_2d(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': point_params['d'] // 10,
-        'r2': point_params['d'] // 5
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -250,8 +338,8 @@ def run_mnist(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -287,8 +375,8 @@ def run_msweb(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -323,8 +411,8 @@ def run_mushroom(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -359,8 +447,8 @@ def run_sparse(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -396,8 +484,8 @@ def run_zero(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -432,8 +520,8 @@ def run_random(iter_batch):
         'buckets': 'max',
         'delta': 1/16,
         'seed_offset': 0,
-        'r1': int(point_params['d'] * 0.15),
-        'r2': int(point_params['d'] * 0.3)
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -466,8 +554,8 @@ def run_querynum(iter_batch):
         'buckets': 'max',
         'delta': 1/2,
         'seed_offset': 0,
-        'r1': point_params['d'] // 10,
-        'r2': point_params['d'] // 5
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -478,11 +566,11 @@ def run_querynum(iter_batch):
         'iter_batch': iter_batch,
         'seed_offset': 0,
         'target_distance': lsh_params['r1'],
-        'max_queries': 80000,
-        'max_resamples': 40000,
+        'max_queries': 100000,
+        'max_resamples': 50000,
     }
 
-    delta_list = np.logspace(1, 8, 8, endpoint=True, base=1/2)
+    delta_list = np.logspace(1, 10, 10, endpoint=True, base=1/2)
     my_rho = np.log(1 - lsh_params['r1']/point_params['d']) / np.log(1 - lsh_params['r2']/point_params['d'])
     my_L = int(np.ceil(np.power(point_params['n'], my_rho)))
     L_list = np.arange(1, 9) * my_L
@@ -513,8 +601,8 @@ def run_querynum_generic(iter_batch, point_params=None):
         'buckets': 'max',
         'delta': 1/2,
         'seed_offset': 0,
-        'r1': point_params['d'] // 10,
-        'r2': point_params['d'] // 5
+        'r1': int(point_params['d'] * R1_FRAC_POST_EXP),
+        'r2': int(point_params['d'] * R2_FRAC_POST_EXP),
     }
 
     exp_params = {
@@ -587,6 +675,18 @@ def run_querynum_zero(iter_batch):
     }
     return run_querynum_generic(iter_batch, point_params)
 
+def run_dp3(iter_batch):
+    return run_dp(iter_batch, 3)
+
+def run_dp4(iter_batch):
+    return run_dp(iter_batch, 4)
+
+def run_dp5(iter_batch):
+    return run_dp(iter_batch, 5)
+
+def run_dp6(iter_batch):
+    return run_dp(iter_batch, 6)
+
 import sys
 from multiprocessing import Pool
 
@@ -601,43 +701,64 @@ def run_easy_sets(x):
 
 
 if __name__ == "__main__":
-    assert len(sys.argv) >= 3
-    task_size = 100
+    import argparse 
+    
+    parser = argparse.ArgumentParser(description='Run experiments with LSH adversary.')
 
-    if sys.argv[1] == 'infliction':
+    parser.add_argument("--target", help="Which experiment to run", required=True)
+    parser.add_argument("--threads", type=int, help="Number of threads to use",required=True)
+    parser.add_argument("--batch_interval", nargs=2, type=int, help="The semi-interval of batches to execute. The whole interval is [0, 100)", required=True)
+
+    args = parser.parse_args()
+
+    # task_size = 100
+
+    target = args.target
+
+    if target == 'infliction':
         func = run_infliction_comp
-    elif sys.argv[1] == 'basic':
+    elif target == 'basic':
         func = run_basic
-    elif sys.argv[1] == '2d':
+    elif target == '2d':
         func = run_2d
-        task_size = 10
-    elif sys.argv[1] == 'easysets':
+        task_size = 10 # TODO: fix!
+    elif target == 'easysets':
         func = run_easy_sets
-    elif sys.argv[1] == 'mnist':
+    elif target == 'mnist':
         func = run_mnist
-    elif sys.argv[1] == 'msweb':
+    elif target == 'msweb':
         func = run_msweb
-    elif sys.argv[1] == 'querynum':
+    elif target == 'querynum':
         func = run_querynum
-    elif sys.argv[1] == 'querynum_mnist':
+    elif target == 'querynum_mnist':
         func = run_querynum_mnist
-    elif sys.argv[1] == 'querynum_msweb':
+    elif target == 'querynum_msweb':
         func = run_querynum_msweb
-    elif sys.argv[1] == 'querynum_mushroom':
+    elif target == 'querynum_mushroom':
         func = run_querynum_mushroom
-    elif sys.argv[1] == 'querynum_zero':
+    elif target == 'querynum_zero':
         func = run_querynum_zero
-    elif sys.argv[1] == 'querynum_sparse':
+    elif target == 'querynum_sparse':
         func = run_querynum_sparse
-    elif sys.argv[1] == 'ensemble':
+    elif target == 'ensemble':
         func = run_ensemble
+    elif target == 'dp3':
+        func = run_dp3
+    elif target == 'dp4':
+        func = run_dp4
+    elif target == 'dp5':
+        func = run_dp5
+    elif target == 'dp6':
+        func = run_dp6        
+    elif target == 'ade':
+        func = run_ade
     else:
         raise RuntimeError("Unkown experiment name")
  
-    task = list(range(task_size))
-    with Pool(int(sys.argv[2])) as p:
-        print(sys.argv[1])
-        for r in tqdm(p.imap(func, task), total=len(task), miniters=1):
-            pass
+    print(f"Running {args.target} for batches {args.batch_interval} with {args.threads} threads.")
+    task = list(range(*args.batch_interval))
+    with Pool(int(args.threads)) as p:
+        for r in tqdm(p.imap(func, task), total=len(task), miniters=1, disable=False, file=sys.stdout):
+            print("Job completed")
         
     

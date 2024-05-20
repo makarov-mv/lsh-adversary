@@ -192,22 +192,18 @@ class HammingLSHDP:
         self._copies = []
         for i in range(self._num_copies):
             self._copies.append(HammingLSHLargeBucket(points=points, random_gen=random_gen, **self._kwargs))
-    
-    # def _validate_point(self, p):
-    #     assert p.dtype == self._dtype
-    #     assert ((p == 0) | (p == 1)).all()
-    #     assert len(p) == self._d
         
+    def geometric_mechanism(self, x):
+        alpha = np.exp(-self._privacy_epsilon/2)
+
+        if 1 - alpha < self._random_gen.uniform(high=alpha + 1):
+            return x
+        res = x + self._random_gen.choice([-1, 1]) * (1 + self._random_gen.geometric(1 - alpha))
+        if res < 0:
+            res = 0
+        return res
+
     def query(self, q):
-        # res = []
-        # for lsh in self._copies:
-        #     a = lsh.query(q)
-        #     if a is not None:
-        #         res.append(a)
-        # if len(res) == 0:
-        #     return None
-        # else:
-        #     return self._random_gen.choice(res)
         success = []
         fail = 0
         for i in self._random_gen.choice(self._num_copies, size=self._query_samples, replace=False):
@@ -217,11 +213,70 @@ class HammingLSHDP:
             else:
                 success.append(query_result)
 
-        offset = np.rint(self._random_gen.laplace(scale=1/self._privacy_epsilon)).astype(int)
-        if offset < 0:
-            offset = 0
-        offset -= fail
-        if offset < 0 or len(success) == 0:
+        if len(success) == 0:
+            return None
+        if self.geometric_mechanism(fail) > self.geometric_mechanism(len(success)):
             return None
         else:
-            return success[np.min((offset, len(success) - 1))]
+            return success[0]
+
+        # offset = np.rint(self._random_gen.laplace(scale=1/self._privacy_epsilon)).astype(int)
+        # if offset < 0:
+        #     offset = 0
+        # offset -= fail
+        # if offset < 0 or len(success) == 0:
+        #     return None
+        # else:
+        #     return success[np.min((offset, len(success) - 1))]
+
+class ADENN:
+    def __init__(self, points, r1, r2, delta=None, random_gen=None, **kwargs):  
+        assert delta is not None
+        assert np.issubdtype(points.dtype, np.signedinteger)
+        assert ((points == 0) | (points == 1)).all()
+        assert random_gen is not None
+
+        self._d = points.shape[1]
+        self._n = points.shape[0]
+        self._dtype = points.dtype
+        self._r1 = r1
+        self._r2 = r2
+        c = r2 / r1
+        self._eps = np.min([(c - 1) / (1 + c), 1/2])
+
+        self._m = int((1/self._eps) ** 2)
+        self._delta = delta
+        self._l = 2 * int((self._d + np.log2(1/delta)) * np.log2(self._d/self._eps))
+        self._r = 2 * int(np.log2(self._n / delta))
+        
+        self._kwargs = kwargs.copy()
+        self._random_gen = random_gen
+        self._populate(points, random_gen)
+        
+    def _populate(self, points, random_gen):
+        self._sketches = random_gen.standard_cauchy(size=(self._l, self._m, self._d))
+        self._point_sketches = self._sketches.dot(points.T)
+        self._points = points.copy()
+    
+    def _validate_point(self, p):
+        assert p.dtype == self._dtype
+        assert ((p == 0) | (p == 1)).all()
+        assert len(p) == self._d
+        
+    def _approx_distances(self, q):
+        inds = self._random_gen.choice(self._l, size=self._r, replace=True)
+        qsketch = self._sketches[inds].dot(q)
+        psketch = self._point_sketches[inds]
+        dists = np.median(np.abs(qsketch[:,:,None] - psketch), axis=1) / 1
+        dists = np.median(dists, axis=0)
+        return dists
+
+    def query(self, q):
+        self._validate_point(q)
+        dists = self._approx_distances(q)
+        p = self._points[np.argmin(dists)]
+        if np.linalg.norm(p - q, 1) <= self._r2:
+            return p
+        else:
+            return None
+
